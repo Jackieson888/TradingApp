@@ -1,0 +1,61 @@
+﻿<Window x:Class="TradingApp.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:TradingApp"
+        mc:Ignorable="d"
+        Title="MainWindow" Height="450" Width="800">
+    <!-- The Window can hold exactly ONE child, so we make that child a Grid
+         and put everything else inside it. -->
+    <Grid>
+        <!-- Step 1: define the skeleton. These only declare the columns/rows;
+             they don't put anything on screen yet. -->
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="200"/>  <!-- watchlist: fixed 200px -->
+            <ColumnDefinition Width="*"/>    <!-- ladder: takes all leftover width -->
+            <ColumnDefinition Width="250"/>  <!-- side panel: fixed 250px -->
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>      <!-- top row: takes leftover height -->
+            <RowDefinition Height="150"/>    <!-- blotter: fixed 150px -->
+        </Grid.RowDefinitions>
+
+        <!-- Step 2: place children into cells. Grid.Row / Grid.Column are
+             "attached properties": the child declares its cell, the Grid reads it.
+             Both are zero-based and default to 0 if omitted.
+             The colored Borders make each region visible while it's only placeholder text. -->
+        <Border Grid.Row="0" Grid.Column="0" Background="#EEF" BorderBrush="Gray" BorderThickness="1">
+            <!-- DataGrid builds one row per item in its ItemsSource (set in code-behind).
+                 We declare the columns ourselves; each Binding is resolved against ONE ROW
+                 object (a Quote), not the window's DataContext.
+                 x:Name lets code-behind reach this control as a field named WatchlistGrid. -->
+            <DataGrid x:Name="WatchlistGrid"
+                      AutoGenerateColumns="False"
+                      IsReadOnly="True"
+                      SelectionMode="Single">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="Symbol" Binding="{Binding Symbol}" Width="*"/>
+                    <DataGridTextColumn Header="Price" Binding="{Binding Price, StringFormat=F2}" Width="*"/>
+                </DataGrid.Columns>
+            </DataGrid>
+        </Border>
+        <Border Grid.Row="0" Grid.Column="1" Background="#EFE" BorderBrush="Gray" BorderThickness="1">
+            <TextBlock Text="ladder goes here"/>
+        </Border>
+        <Border Grid.Row="0" Grid.Column="2" Background="#FEE" BorderBrush="Gray" BorderThickness="1">
+            <StackPanel>
+                <TextBlock Text="side panel goes here"/>
+                <!-- Step 3's binding, moved here. Still bound to the window's DataContext. -->
+                <TextBlock Text="{Binding Price, StringFormat=F2}"/>
+                <!-- Timer reads this each tick to pick approach 1 (checked) or 2 (unchecked). -->
+                <CheckBox x:Name="ReplaceRowsCheck" Content="Replace row objects"/>
+            </StackPanel>
+        </Border>
+
+        <!-- ColumnSpan="3" stretches the blotter across all three columns. -->
+        <Border Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="3" Background="#FFE" BorderBrush="Gray" BorderThickness="1">
+            <TextBlock Text="blotter goes here"/>
+        </Border>
+    </Grid>
+</Window>
