@@ -5,12 +5,12 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:TradingApp"
         mc:Ignorable="d"
-        Title="Trading Practice" Height="840" Width="1380" MinHeight="680" MinWidth="1100"
+        Title="Trading Demo App" Height="840" Width="1380" MinHeight="680" MinWidth="1100"
         Background="#0B0E13" Foreground="#D5DAE3">
 
     <!-- THEME. Everything visual is defined once here, like a CSS file.
          * Setting Foreground on the Window above makes every TextBlock inside inherit that text
-           colour (it is an "inherited" property), so we don't repeat it.
+           color (it is an "inherited" property), so we don't repeat it.
          * A Style with an x:Key is applied by name:  Style="{StaticResource SectionHeader}"
          * A Style with NO key (the DataGrid, ListBox and RadioButton ones below) automatically
            applies to every control of that type in the window. -->
@@ -99,27 +99,27 @@
     <Grid>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="240"/>   <!-- watchlist + connection -->
-            <ColumnDefinition Width="*"/>     <!-- chart + practice orders (takes leftover width) -->
+            <ColumnDefinition Width="*"/>     <!-- chart + order log (takes leftover width) -->
             <ColumnDefinition Width="400"/>   <!-- order book + glossary -->
         </Grid.ColumnDefinitions>
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>    <!-- practice-mode banner: as tall as its text -->
+            <RowDefinition Height="Auto"/>    <!-- read-only demo banner: as tall as its text -->
             <RowDefinition Height="*"/>       <!-- main area (takes leftover height) -->
-            <RowDefinition Height="190"/>     <!-- practice orders log -->
+            <RowDefinition Height="190"/>     <!-- order log -->
         </Grid.RowDefinitions>
 
-        <!-- ============ Banner: be honest about what this app is ============ -->
+        <!-- ============ Banner: states plainly that this is a read-only demo, not real trading ============ -->
         <Border Grid.Row="0" Grid.ColumnSpan="3" Background="#3A2F0B" BorderBrush="#7A6320"
                 BorderThickness="0,0,0,1" Padding="12,6">
             <TextBlock TextWrapping="Wrap" Foreground="#F5E1A0">
-                <Run FontWeight="Bold" Text="PRACTICE MODE."/>
+                <Run FontWeight="Bold" Text="READ-ONLY DEMO."/>
                 <!-- x:Name so code-behind can reword this when running on the simulated feed. -->
                 <Run x:Name="BannerText" Text="The prices are real and live (from the Kraken crypto exchange), but this app never places real orders and no money is involved. It is for learning how a trading screen works. Nothing here is financial advice."/>
             </TextBlock>
         </Border>
 
         <!-- ============ 1. Watchlist (+ connection status at the bottom) ============ -->
-        <!-- RowSpan="2": this panel is as tall as the main area AND the practice-orders row. -->
+        <!-- RowSpan="2": this panel is as tall as the main area AND the order-log row. -->
         <Border Grid.Row="1" Grid.RowSpan="2" Grid.Column="0" Style="{StaticResource Panel}">
             <DockPanel>
                 <TextBlock Style="{StaticResource SectionHeader}" Text="Watchlist"/>
@@ -172,7 +172,7 @@
                 </WrapPanel>
 
                 <!-- One line of live numbers above the chart. Runs are pieces of one TextBlock that
-                     can be styled separately: code-behind colours the middle one green or red. -->
+                     can be styled separately: code-behind colors SummaryChange green or red. -->
                 <TextBlock DockPanel.Dock="Top" Margin="0,0,0,6" FontSize="13">
                     <Run x:Name="SummaryLast" FontWeight="Bold" FontSize="18" Text="--"/>
                     <Run Text="  "/>
@@ -198,7 +198,7 @@
                     <Run Foreground="#5B9BF0" FontWeight="Bold" Text="Blue (left) = buyers"/>
                     <Run Text="and how much they want to buy."/>
                     <Run Foreground="#F0716F" FontWeight="Bold" Text="Red (right) = sellers"/>
-                    <Run Text="and how much they're offering. Longer bar = more waiting at that price. The gold prices are the best offers on each side. Click blue at a price to practice a BUY, or red to practice a SELL."/>
+                    <Run Text="and how much they're offering. Longer bar = more waiting at that price. The gold prices are the best offers on each side. Click blue at a price to simulate a BUY, or red to simulate a SELL."/>
                 </TextBlock>
 
                 <!-- A plain-language summary of the best prices right now (set from code-behind). -->
@@ -244,18 +244,18 @@
                             </TextBlock>
                             <TextBlock Style="{StaticResource GlossaryItem}">
                                 <Run FontWeight="Bold" Text="Tick."/>
-                                <Run Text="The smallest price step a market allows. Each row of the order book is one tick."/>
+                                <Run Text="The smallest price step a market allows. Normally each row of the order book is one tick. When buyers and sellers are far apart, each row groups several ticks together so both sides fit on screen."/>
                             </TextBlock>
                             <TextBlock Style="{StaticResource GlossaryItem}">
                                 <Run FontWeight="Bold" Text="Why do numbers flicker?"/>
-                                <Run Text="Hundreds of changes arrive every second. The screen refreshes about 60 times a second and always shows the very latest."/>
+                                <Run Text="Hundreds of changes can arrive every second. The screen refreshes dozens of times a second and always shows the very latest."/>
                             </TextBlock>
                         </StackPanel>
                     </ScrollViewer>
                 </Expander>
 
-                <!-- Column headings. This Grid's columns are 3 : 4 : 3, which matches the ladder's
-                     30% / 40% / 30% split, so each heading sits over its column. -->
+                <!-- Column headings. This Grid's columns are 3 : 4 : 3, matching the ladder's
+                     30% / 40% / 30% split in LadderMath, so each heading sits over its column. -->
                 <Grid DockPanel.Dock="Top" Margin="0,0,0,2">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="3*"/>
@@ -274,16 +274,16 @@
                      xmlns:local namespace declared at the top, so local:LadderControl means the
                      class TradingApp.LadderControl. It draws itself; MainWindow feeds it books. -->
                 <local:LadderControl x:Name="Ladder"
-                                     ToolTip="Click the blue side to practice a BUY at that price, or the red side to practice a SELL. Nothing real is ordered."/>
+                                     ToolTip="Click the blue side to simulate a BUY at that price, or the red side to simulate a SELL. Nothing real is ordered."/>
             </DockPanel>
         </Border>
 
-        <!-- ============ 4. Practice orders (the blotter) ============ -->
+        <!-- ============ 4. Order log (the blotter) ============ -->
         <Border Grid.Row="2" Grid.Column="1" Style="{StaticResource Panel}">
             <DockPanel>
-                <TextBlock Style="{StaticResource SectionHeader}" Text="Practice Orders"/>
+                <TextBlock Style="{StaticResource SectionHeader}" Text="Order Log"/>
                 <TextBlock Style="{StaticResource SectionHelp}"
-                           Text="A log of the practice orders you've clicked on the order book. They are NOT sent anywhere. Each line shows the time, BUY or SELL, how many coins, which market, and the price you clicked."/>
+                           Text="A log of the orders you've clicked on the order book. This is a demo: they are NOT sent anywhere and nothing is bought or sold. Each line shows the time, BUY or SELL, how many coins, which market, and the price you clicked."/>
                 <!-- Consolas is a fixed-width font, so these headings line up with the log lines
                      below (see OnLadderClicked in MainWindow.xaml.cs, which pads the columns). -->
                 <TextBlock DockPanel.Dock="Top" FontFamily="Consolas" FontWeight="Bold" Margin="4,0,0,2"

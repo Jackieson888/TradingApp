@@ -1,12 +1,9 @@
-﻿using System.Configuration;
-using System.Data;
-using System.Windows;
+﻿using System.Windows;
 
 namespace TradingApp;
 
-/// <summary>
-/// Interaction logic for App.xaml
-/// </summary>
+// The application entry point. App.xaml sets MainWindow as the startup window; nothing else
+// happens here.
 public partial class App : Application
 {
 }

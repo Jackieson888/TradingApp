@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A read-only WPF (.NET 10, `net10.0-windows`) practice trading screen: price chart, order-book ladder, watchlist. It never places real orders. The audience is beginner traders, so every panel carries plain-English headers, descriptions and tooltips. Keep that when adding UI.
+A read-only WPF (.NET 10, `net10.0-windows`) demo trading screen: price chart, order-book ladder, watchlist. It never places real orders. The audience is beginner traders, so every panel carries plain-English headers, descriptions and tooltips. Keep that when adding UI.
 
 The owner is new to C#/WPF and comes from JavaScript/TypeScript. Code comments are deliberately explanatory (they say *why*, often with beginner-level context). Match that density and tone when editing.
 
@@ -30,7 +30,7 @@ This is the central design rule. Most of the code exists to uphold it.
 1. A feed (`KrakenMarketDataSource` over WebSocket, or `FakeMarketDataSource` random walk) runs on a background thread. It keeps a private, non-thread-safe `LocalOrderBook` per market.
 2. After each change it publishes an **immutable** `OrderBookSnapshot` into a `ConcurrentDictionary` by replacing the entry atomically.
 3. `MainWindow`'s `_frameTimer` (`DispatcherTimer`, 16 ms, UI thread) is the **only** path for market data to reach the screen. Each tick it calls `IMarketDataSource.GetLatestBook`, updates `Quote` rows, samples mid prices into each market's `PriceHistory` every 100 ms, hands the selected book to `LadderControl`, and invalidates `PriceChartControl` (every frame, because the time axis is clock-driven).
-4. `LadderControl.PriceClicked` → `MainWindow.OnLadderClicked` appends to the practice-orders log.
+4. `LadderControl.PriceClicked` → `MainWindow.OnLadderClicked` appends to the order log.
 
 Rules that follow from this (full list and rationale in [.claude/skills/threading-review/SKILL.md](.claude/skills/threading-review/SKILL.md)):
 - Feed/background code never touches `System.Windows` types, and never calls `Dispatcher.BeginInvoke` per update. The only allowed hop is the rare `StatusChanged` event.

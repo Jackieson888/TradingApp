@@ -10,7 +10,7 @@ public partial class MainWindow : Window
     // =====================================================================
     // How everything fits together:
     //
-    //   KrakenMarketDataSource (WebSocket loop on a background thread)
+    //   Kraken or Fake MarketDataSource (background thread)
     //        |  publishes immutable OrderBookSnapshots
     //        v
     //   IMarketDataSource.GetLatestBook(symbol)       <- the only thing the UI knows about
@@ -22,49 +22,50 @@ public partial class MainWindow : Window
     //        |        '-- PriceChartControl draws the selected market's history
     //        '-- hands the selected symbol's book to the LadderControl
     //                 |
-    //                 '-- raises PriceClicked ---> OnLadderClicked ---> practice-orders log
+    //                 '-- raises PriceClicked ---> OnLadderClicked ---> order log
     // =====================================================================
 
-    // --- Fields: state only. No statements here. ---
+    // ---- Fields ----
 
-    // Which feed to use. By default the real one (live prices from Kraken, needs internet).
-    // Set the environment variable TRADINGAPP_FEED=fake to use made-up prices instead: handy
-    // offline, and for demos, because a fake market moves enough to show off the chart.
+    // Which feed to use. By default the live Kraken feed (needs internet). Set the environment
+    // variable TRADINGAPP_FEED=fake to use simulated prices instead: useful offline, and for
+    // demos, because the fake market moves enough to show off the chart.
     private static readonly bool UseFakeFeed =
         string.Equals(Environment.GetEnvironmentVariable("TRADINGAPP_FEED"), "fake", StringComparison.OrdinalIgnoreCase);
 
-    // We hold the INTERFACE type, so nothing below knows or cares which feed this is.
+    // Typed as the interface, so nothing below depends on which feed this is.
     private readonly IMarketDataSource _source =
         UseFakeFeed ? new FakeMarketDataSource() : new KrakenMarketDataSource();
 
-    // UI-owned. Only the UI thread may touch this (it feeds the DataGrid).
+    // The watchlist rows. ObservableCollection tells the bound DataGrid when rows are added.
+    // UI-thread only, because the DataGrid is bound to it.
     private readonly ObservableCollection<Quote> _quotes = new();
 
-    // Price history, one per market. Owned by the UI thread (no locking needed): the frame timer
-    // writes to it and the chart reads from it, both on the UI thread.
+    // Price history, one per market. UI-thread only (so no locking): the frame timer writes to
+    // it and the chart reads from it.
     //
-    // Retention vs. performance: 5 minutes sampled 10 times a second is 3,000 points per market,
-    // about 72 KB each. That is tiny, and drawing 3,000 points a frame is cheap. Because we SAMPLE
-    // at a fixed rate instead of recording every update, memory and drawing cost stay the same
-    // however fast the feed is. Raise these two numbers if you want a longer or finer chart.
+    // 5 minutes sampled 10 times a second is 3,000 points per market, well under 100 KB each.
+    // Because prices are SAMPLED at a fixed rate rather than recorded on every update, memory and
+    // drawing cost stay the same however fast the feed is. Change these two values for a longer
+    // or finer-grained chart.
     private static readonly TimeSpan HistoryRetention = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan SampleInterval = TimeSpan.FromMilliseconds(100);
     private readonly Dictionary<string, PriceHistory> _history = new();
     private DateTime _lastSample = DateTime.MinValue;
 
-    // One timer, one job: ~60 times a second, copy the latest data onto the screen.
-    // DispatcherTimer ticks on the UI thread.
+    // ~60 times a second, copies the latest data onto the screen. A DispatcherTimer runs its
+    // Tick handler on the UI thread, so the handler can touch controls directly.
     private readonly DispatcherTimer _frameTimer = new() { Interval = TimeSpan.FromMilliseconds(16) };
 
-    // A second, slow timer, only for the small "developer stats" line.
+    // Once a second, refreshes the "For developers" stats line.
     private readonly DispatcherTimer _statsTimer = new() { Interval = TimeSpan.FromSeconds(1) };
 
     // Which symbol the chart and ladder are showing. Follows the selected watchlist row.
     private string _selectedSymbol = "";
-    private string _rangeLabel = "2 min";
+    private string _rangeLabel = "2 min";   // shown in the chart summary ("... over 2 min")
 
-    // The last snapshot we wrote into the ladder's text labels, so we only rebuild the text
-    // when the book actually changed.
+    // The last book written into the ladder's text labels, so the text is only rebuilt when
+    // the book actually changes.
     private OrderBookSnapshot? _summarizedBook;
 
     // Counters for the developer stats (UI-thread only, so plain fields are fine).
@@ -72,18 +73,27 @@ public partial class MainWindow : Window
     private int _frames;
     private int _lastFrames;
 
-    // Colours for the "+1.23 (0.01%)" text above the chart.
-    private static readonly Brush UpTextBrush = new SolidColorBrush(Color.FromRgb(0x16, 0xC7, 0x84));
-    private static readonly Brush DownTextBrush = new SolidColorBrush(Color.FromRgb(0xEA, 0x39, 0x43));
+    // Colors for the "+1.23 (0.01%)" text above the chart.
+    // Frozen (made immutable) like the brushes in the drawn controls, so WPF skips change tracking.
+    private static readonly Brush UpTextBrush = Frozen(Color.FromRgb(0x16, 0xC7, 0x84));
+    private static readonly Brush DownTextBrush = Frozen(Color.FromRgb(0xEA, 0x39, 0x43));
 
-    // --- Constructor: setup code runs here, after InitializeComponent() has built the XAML. ---
+    private static SolidColorBrush Frozen(Color color)
+    {
+        var brush = new SolidColorBrush(color);
+        brush.Freeze();
+        return brush;
+    }
+
+    // ---- Constructor: wires up events and timers. InitializeComponent() must run first; it
+    //      builds the controls declared in MainWindow.xaml. ----
     public MainWindow()
     {
         InitializeComponent();
 
         WatchlistGrid.ItemsSource = _quotes;
 
-        // Don't claim the prices are real when they aren't.
+        // The XAML banner says prices are live; reword it when they're simulated.
         if (UseFakeFeed)
         {
             BannerText.Text = "The prices are SIMULATED by a built-in fake feed (for offline use and demos), not real market data. " +
@@ -91,8 +101,8 @@ public partial class MainWindow : Window
         }
 
         // Selecting a watchlist row chooses which market the chart and ladder show.
-        // 'SelectedItem is Quote quote' checks the type AND gives you a typed variable in one
-        // step (like narrowing with `instanceof` in TS).
+        // 'SelectedItem is Quote quote' checks the type and, if it matches, declares a typed
+        // variable 'quote' in one step (pattern matching).
         WatchlistGrid.SelectionChanged += (sender, e) =>
         {
             if (WatchlistGrid.SelectedItem is Quote quote)
@@ -107,35 +117,34 @@ public partial class MainWindow : Window
             }
         };
 
-        // The chart's range and style controls. (We subscribe AFTER InitializeComponent, so the
-        // IsChecked="True" defaults in the XAML didn't fire these; the chart's own defaults of
-        // 2 minutes and Line already match.)
+        // The chart's range and style radio buttons. These handlers are attached after
+        // InitializeComponent, so the IsChecked="True" defaults in the XAML don't trigger them.
+        // The chart's own defaults (2 minutes, Line) already match those.
         Range1.Checked += (sender, e) => SetRange(60, "1 min");
         Range2.Checked += (sender, e) => SetRange(120, "2 min");
         Range5.Checked += (sender, e) => SetRange(300, "5 min");
         ModeLine.Checked += (sender, e) => Chart.Mode = ChartMode.Line;
         ModeCandles.Checked += (sender, e) => Chart.Mode = ChartMode.Candles;
 
-        // Subscribe to the ladder's click event.
         Ladder.PriceClicked += OnLadderClicked;
 
-        // The feed raises StatusChanged on a BACKGROUND thread, and StatusText is a UI object,
-        // so hop to the UI thread first. UI objects may only be touched from the UI thread. It's fine to use
-        // BeginInvoke here because status changes are rare (see IMarketDataSource).
+        // StatusChanged is raised on a BACKGROUND thread, and WPF controls may only be touched
+        // from the UI thread, so Dispatcher.BeginInvoke queues the update onto it. That is fine
+        // here because status changes are rare (see IMarketDataSource).
         _source.StatusChanged += (sender, text) => Dispatcher.BeginInvoke(() => StatusText.Text = text);
 
-        // --- Frame timer: the ONLY place market data reaches the screen. ---
-        // Safe to start before the feed does: with no rows yet, the loop below does nothing.
+        // ---- Frame timer: the ONLY place market data reaches the screen. ----
+        // Safe to start before the feed does: with no watchlist rows yet, it does almost nothing.
         _frameTimer.Tick += (sender, e) =>
         {
             DateTime now = DateTime.UtcNow;
 
-            // Is it time to record a history sample? (Every 100 ms, not every frame.)
+            // Is it time to record a history sample? (Every SampleInterval, not every frame.)
             bool sampleDue = now - _lastSample >= SampleInterval;
             if (sampleDue) _lastSample = now;
 
-            // Watchlist: copy the latest mid price into the existing rows (mutate, don't
-            // replace, so the user's selection survives). On sample ticks, also record it.
+            // Watchlist: update each existing row's price in place (replacing the row objects would
+            // lose the user's selection). On sample ticks, also record the price in its history.
             foreach (var quote in _quotes)
             {
                 var book = _source.GetLatestBook(quote.Symbol);
@@ -149,8 +158,8 @@ public partial class MainWindow : Window
                 }
             }
 
-            // Ladder: hand it the latest snapshot. If nothing changed since the last frame, it's
-            // the same object and the ladder skips the repaint.
+            // Ladder: hand it the latest snapshot. If nothing changed since the last frame it is
+            // the same object, and the ladder skips the repaint.
             if (_selectedSymbol != "")
             {
                 var ladderBook = _source.GetLatestBook(_selectedSymbol);
@@ -160,15 +169,15 @@ public partial class MainWindow : Window
 
             if (sampleDue) UpdateChartSummary();
 
-            // Ask the chart to repaint EVERY frame. Its time axis is tied to the clock, so even
-            // with no new data it needs to slide left a little each frame to look smooth.
+            // Repaint the chart EVERY frame. Its time axis is tied to the clock, so even with no
+            // new data it slides left a little each frame.
             Chart.InvalidateVisual();
 
             _frames++;
         };
         _frameTimer.Start();
 
-        // --- Developer stats, once a second ---
+        // ---- Developer stats: per-second rates, from the change in each counter since last tick ----
         _statsTimer.Tick += (sender, e) =>
         {
             long produced = _source.UpdateCount;
@@ -180,22 +189,21 @@ public partial class MainWindow : Window
         };
         _statsTimer.Start();
 
-        // Stop the feed when the window closes.
-        Closed += (sender, e) => _source.Dispose();
+        Closed += (sender, e) => _source.Dispose();   // stop the feed when the window closes
 
-        // Start the feed once the window is on screen. 'Loaded' fires after the first layout.
-        // The handler is 'async' so it can 'await' the network without freezing the window.
-        // (async void is normally avoided, but it's the standard shape for event handlers.)
+        // Start the feed once the window is on screen ('Loaded' fires after the first layout).
+        // The lambda is 'async' so it can await the network without freezing the window. An
+        // async lambda used as an event handler is 'async void', which is normally avoided but
+        // is the standard pattern for event handlers.
         Loaded += async (sender, e) => await StartFeedAsync();
     }
 
-    // Starts the feed, then builds the watchlist from whatever instruments it reports.
+    // Starts the feed, then builds the watchlist from the instruments it reports.
     //
-    // THE KEY ASYNC IDEA: while 'await _source.StartAsync()' waits on the network, the UI
-    // thread is FREE: the window keeps painting and responding. When the work finishes, this
-    // method resumes on the UI thread (WPF remembers where the await started), so it is safe
-    // to touch _quotes and controls afterwards. Same mental model as JS: await resumes on the
-    // main thread.
+    // While 'await _source.StartAsync()' waits on the network, the UI thread is free: the window
+    // keeps painting and responding. Afterwards this method resumes on the UI thread (await
+    // returns to the thread it started on unless told otherwise), so it is safe to touch
+    // _quotes and controls.
     private async Task StartFeedAsync()
     {
         try
@@ -204,7 +212,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            // No network, firewall, Kraken down, region blocked...
+            // e.g. no network, firewall, Kraken down, region blocked
             StatusText.Text = "Feed failed to start: " + ex.Message;
             return;
         }
@@ -226,8 +234,9 @@ public partial class MainWindow : Window
         UpdateChartSummary();
     }
 
-    // Rewrites the one line of live numbers above the chart: latest price, change over the visible
-    // window (green or red), and the window's high and low.
+    // Rewrites the line of live numbers above the chart: latest price, change over the visible
+    // window (green or red), and the window's high and low. Does nothing until there is data.
+    // ('is not PricePoint latest' unwraps the nullable Latest into 'latest', or returns if null.)
     private void UpdateChartSummary()
     {
         if (!_history.TryGetValue(_selectedSymbol, out var history)) return;
@@ -247,8 +256,8 @@ public partial class MainWindow : Window
         SummaryHighLow.Text = $"    High {max.ToString(format)}   Low {min.ToString(format)}";
     }
 
-    // Rewrites the order book's title and one-line summary, but only when the book changed
-    // (comparing references is free; rebuilding strings 60 times a second is not).
+    // Rewrites the order book's title and summary, but only when the book has changed
+    // (comparing references is nearly free; rebuilding strings 60 times a second is not).
     private void UpdateLadderLabels(OrderBookSnapshot? book)
     {
         if (book == null || ReferenceEquals(book, _summarizedBook)) return;
@@ -263,25 +272,23 @@ public partial class MainWindow : Window
             $"Best price to BUY at (lowest ask): {book.BestAsk.ToString(format)}\n" +
             $"Spread: {book.Spread.ToString(format)}";
 
-        // When the market is sparse the ladder groups prices together so there is something to
-        // see; say so, otherwise the price labels would look like they skip numbers.
-        // (This reads the step from the ladder's previous frame. That is one book update stale,
-        // which is invisible in practice because the text is rewritten on every book change.)
+        // When the market is sparse the ladder groups several ticks per row. Say so, otherwise
+        // the price labels look like they skip numbers. (RowPriceStep is from the ladder's
+        // previous render, so it can lag by one book update; not noticeable in practice.)
         if (Ladder.RowPriceStep > book.TickSize * 1.5)
         {
             LadderSummary.Text += $"\nEach row groups prices together: 1 row = {Ladder.RowPriceStep.ToString(format)}";
         }
     }
 
-    // The listener for ladder clicks. This is a normal method, not a lambda, because it's big enough to
-    // deserve a name. It runs on the UI thread, because the click that raised the event did.
-    // For now it just writes a log line. In a real app this is where you'd forward to an
-    // order-entry service instead (see LadderClickEventArgs.cs).
+    // Handles ladder clicks by adding a line to the order log. Runs on the UI thread,
+    // because the mouse click that raised the event did. A real app would forward the click to
+    // an order-entry service here instead (see LadderClickEventArgs.cs).
     private void OnLadderClicked(object? sender, LadderClickEventArgs e)
     {
-        // The widths below ({e.Side,-4} = left-aligned in 4 characters, etc.) must match the
-        // column headings in MainWindow.xaml. Quantity is fixed at 1 for now.
-        // 0.########## prints only the decimals that are needed (84547.7, 0.0000001, ...).
+        // The column widths ({e.Side,-4} = left-aligned, padded to 4 characters, etc.) must match
+        // the headings in MainWindow.xaml. Quantity is fixed at 1.
+        // '0.##########' prints only the decimals that are needed (84547.7, 0.0000001, ...).
         string line = $"{DateTime.Now:HH:mm:ss}  {e.Side,-4}  {1,-3}  {e.Symbol,-9}  {e.Price:0.##########}";
         BlotterList.Items.Add(line);
         BlotterList.ScrollIntoView(line);

@@ -8,19 +8,19 @@ namespace TradingApp;
 
 public enum ChartMode { Line, Candles }
 
-// A live price chart drawn by hand, the same technique as LadderControl: ONE element, ONE
-// OnRender that records drawing commands. No per-point WPF elements, no bindings.
+// A live price chart drawn by hand, using the same technique as LadderControl: one element whose
+// OnRender records drawing commands. No per-point WPF elements, no bindings.
 //
-// What it shows: the last few minutes of prices for one market, recorded live while the app
-// runs (see PriceHistory). The right edge is always "now"; time scrolls the chart to the left.
+// It shows the last few minutes of one market's prices (from a PriceHistory). The right edge is
+// always "now", and the chart scrolls left as time passes.
 //
-// Touches that make it feel alive (and each is a small, separate idea in the code):
-//   * the time axis is anchored to the CLOCK, so labels glide left as time passes
-//   * the vertical scale EASES toward the new range instead of jumping
+// Animated details, each handled in its own section of Draw():
+//   * the time axis is tied to the CLOCK, so labels glide left as time passes
+//   * the vertical scale EASES toward its new range instead of jumping
 //   * a dot with a pulsing halo marks the latest price, with a price tag on the axis
-//   * move the mouse over it for a crosshair and a readout
+//   * hovering shows a crosshair and a readout of the price at that point
 //
-// MainWindow calls InvalidateVisual() once per frame (~60 fps); that is what makes it animate.
+// MainWindow calls InvalidateVisual() every frame (~60 fps), which is what makes it animate.
 public class PriceChartControl : FrameworkElement
 {
     // ---- Layout constants ----
@@ -30,7 +30,8 @@ public class PriceChartControl : FrameworkElement
     private const double BottomAxisHeight = 24;   // room for time labels
     private const int CandleCount = 60;           // candle mode always shows about this many candles
 
-    // ---- Colors. Brushes and pens are Frozen (immutable) so WPF can reuse them cheaply. ----
+    // ---- Colors. Brushes and pens are created once and frozen (made immutable) so WPF can
+    //      skip change tracking on them. ----
     private static readonly Color UpColor = Color.FromRgb(0x16, 0xC7, 0x84);
     private static readonly Color DownColor = Color.FromRgb(0xEA, 0x39, 0x43);
 
@@ -68,8 +69,8 @@ public class PriceChartControl : FrameworkElement
         return brush;
     }
 
-    // A brush that goes from the color at the top (translucent) to fully transparent at the bottom.
-    // The 90 is the gradient angle in degrees: 0 = left-to-right, 90 = top-to-bottom.
+    // A vertical gradient from the color (translucent) at the top to fully transparent at the
+    // bottom. The 90 is the gradient angle in degrees: 0 = left-to-right, 90 = top-to-bottom.
     private static LinearGradientBrush Fade(Color color)
     {
         var brush = new LinearGradientBrush(Color.FromArgb(0x55, color.R, color.G, color.B),
@@ -93,11 +94,11 @@ public class PriceChartControl : FrameworkElement
     }
 
     // ---- State ----
-    private Point? _mouse;                    // where the pointer is over the control, if it is
+    private Point? _mouse;                    // pointer position over the control; null when outside
     private double _viewMin = double.NaN;     // the price range currently DISPLAYED (eases toward the target)
     private double _viewMax = double.NaN;
 
-    // What to draw. MainWindow sets these.
+    // What to draw. MainWindow sets these properties.
     private PriceHistory? _history;
     public PriceHistory? History
     {
@@ -114,9 +115,9 @@ public class PriceChartControl : FrameworkElement
     public ChartMode Mode { get; set; } = ChartMode.Line;
     public string PriceFormat { get; set; } = "F2";        // decimals for the readout and price tag
 
-    // How long the last OnRender took to RECORD its drawing commands (milliseconds, smoothed).
-    // This is not the time to paint pixels (WPF does that later, on its render thread), but it is
-    // the cost our code adds on the UI thread each frame. Shown in the developer stats.
+    // How long OnRender takes to RECORD its drawing commands (milliseconds, smoothed). This is
+    // not the time to paint pixels (WPF does that later on its own render thread); it is the cost
+    // our code adds to the UI thread each frame. Shown in the developer stats.
     public double LastRenderMilliseconds { get; private set; }
 
     public PriceChartControl()
@@ -124,7 +125,7 @@ public class PriceChartControl : FrameworkElement
         ClipToBounds = true;
     }
 
-    // ---- Mouse: just remember where the pointer is. The next frame draws the crosshair. ----
+    // ---- Mouse: only remember where the pointer is. The next frame draws the crosshair. ----
     protected override void OnMouseMove(MouseEventArgs e)
     {
         base.OnMouseMove(e);
@@ -143,7 +144,7 @@ public class PriceChartControl : FrameworkElement
         long started = Stopwatch.GetTimestamp();
         Draw(dc);
         double ms = (Stopwatch.GetTimestamp() - started) * 1000.0 / Stopwatch.Frequency;
-        LastRenderMilliseconds = LastRenderMilliseconds * 0.9 + ms * 0.1;   // smooth out jitter
+        LastRenderMilliseconds = LastRenderMilliseconds * 0.9 + ms * 0.1;   // moving average, smooths out jitter
     }
 
     private void Draw(DrawingContext dc)
@@ -152,11 +153,12 @@ public class PriceChartControl : FrameworkElement
         double height = ActualHeight;
         double pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
 
-        // Full-size background. Besides looking right, WPF only sends mouse events to painted
-        // pixels, so this is what lets the crosshair work over "empty" areas.
+        // Full-size background. WPF only sends mouse events to painted pixels, so this is also
+        // what lets the crosshair work over "empty" areas.
         dc.DrawRectangle(BackgroundBrush, null, new Rect(0, 0, width, height));
 
-        // The plot area: where the data is drawn. Axis labels live in the margins around it.
+        // The plot area is where the data is drawn; axis labels go in the margins around it.
+        // Too small to draw anything useful below 60x60.
         double plotLeft = LeftPad;
         double plotTop = TopPad;
         double plotWidth = width - LeftPad - RightAxisWidth;
@@ -170,7 +172,7 @@ public class PriceChartControl : FrameworkElement
         double windowSeconds = WindowSeconds;
         DateTime from = now - TimeSpan.FromSeconds(windowSeconds);
 
-        // Candles are built fresh each frame from the history (cheap: a few thousand points).
+        // Candles are rebuilt from the history every frame (cheap: a few thousand points).
         TimeSpan candleInterval = TimeSpan.FromSeconds(windowSeconds / CandleCount);
         List<Candle>? candles = null;
 
@@ -204,7 +206,7 @@ public class PriceChartControl : FrameworkElement
             return;
         }
 
-        // ---- Vertical scale: add breathing room, then EASE toward it ----
+        // ---- Vertical scale: add 12% padding above and below, then EASE toward it ----
         // Even a perfectly flat market needs a visible scale, so the span is never smaller than
         // 0.01% of the price (about $8 for BTC). The data sits in the middle of that span.
         double mid = (dataMin + dataMax) / 2;
@@ -226,20 +228,21 @@ public class PriceChartControl : FrameworkElement
         double viewMin = _viewMin;
         double viewMax = _viewMax;
 
-        // Local functions: tiny helpers that can see the variables above ("closures", like inner
-        // functions in JS). X = time -> pixel, Y = price -> pixel. Y is flipped: bigger = higher up.
+        // Local functions (methods declared inside a method) that can use the variables above.
+        // X converts a time to a horizontal pixel, Y a price to a vertical pixel. Screen y grows
+        // downward, so Y is flipped: a higher price gives a smaller y.
         double X(DateTime time) => plotLeft + (time - from).TotalSeconds / windowSeconds * plotWidth;
         double Y(double price) => plotTop + (viewMax - price) / (viewMax - viewMin) * plotHeight;
 
         PricePoint latest = history.Latest.Value;
         int firstVisible = history.FirstIndexAtOrAfter(from);
         double windowStartPrice = history.Points[Math.Min(firstVisible, history.Count - 1)].Price;
-        bool isUp = latest.Price >= windowStartPrice;   // the whole chart is tinted by the trend
+        bool isUp = latest.Price >= windowStartPrice;   // green if up over the window, red if down
         Brush trendBrush = isUp ? UpBrush : DownBrush;
 
-        // ---- Grid lines and the price axis (right) ----
+        // ---- Grid lines and the price axis (right): roughly 5 lines at "nice" prices ----
         double step = NiceStep((viewMax - viewMin) / 5);
-        int decimals = Math.Max(0, (int)Math.Ceiling(-Math.Log10(step) - 1e-9));
+        int decimals = Math.Max(0, (int)Math.Ceiling(-Math.Log10(step) - 1e-9));   // enough decimals to show the step
         string axisFormat = "N" + decimals;   // "N" adds thousands separators: 84,760.5
         double firstGrid = Math.Ceiling(viewMin / step) * step;
         for (int i = 0; i < 30; i++)
@@ -252,7 +255,8 @@ public class PriceChartControl : FrameworkElement
                      pixelsPerDip, plotRight + 8, y - 8, TextAlignment.Left);
         }
 
-        // ---- Time axis (bottom): labels sit at fixed clock times, so they glide left ----
+        // ---- Time axis (bottom): labels sit at fixed clock times (e.g. every :20s), so they
+        //      glide left as time passes. The first label is the first multiple after 'from'. ----
         double labelEvery = windowSeconds <= 60 ? 10 : windowSeconds <= 120 ? 20 : 60;
         long labelTicks = TimeSpan.FromSeconds(labelEvery).Ticks;
         DateTime label = new DateTime((from.Ticks / labelTicks + 1) * labelTicks, DateTimeKind.Utc);
@@ -264,7 +268,7 @@ public class PriceChartControl : FrameworkElement
                      AxisTextBrush, pixelsPerDip, x, plotBottom + 5, TextAlignment.Center);
         }
 
-        // ---- The data itself (clipped so it can't spill into the axis margins) ----
+        // ---- The data itself. PushClip keeps it out of the axis margins until the matching Pop(). ----
         dc.PushClip(new RectangleGeometry(new Rect(plotLeft, plotTop, plotWidth, plotHeight)));
         if (Mode == ChartMode.Candles && candles != null)
         {
@@ -282,7 +286,8 @@ public class PriceChartControl : FrameworkElement
         DrawTag(dc, latest.Price.ToString(PriceFormat, CultureInfo.InvariantCulture), trendBrush, WhiteBrush,
                 pixelsPerDip, plotRight + 4, lastY);
 
-        double pulse = (Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency % 1.6) / 1.6;   // 0 -> 1, repeating
+        // The halo grows and fades over a repeating 1.6-second cycle; 'pulse' goes 0 -> 1.
+        double pulse = (Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency % 1.6) / 1.6;
         dc.PushOpacity(0.55 * (1 - pulse));
         dc.DrawEllipse(trendBrush, null, new Point(plotRight, lastY), 4 + 14 * pulse, 4 + 14 * pulse);   // the expanding halo
         dc.Pop();
@@ -290,6 +295,7 @@ public class PriceChartControl : FrameworkElement
         dc.DrawEllipse(WhiteBrush, null, new Point(plotRight, lastY), 2, 2);
 
         // ---- Crosshair and readout, only while the mouse is over the plot ----
+        // ('_mouse is Point mouse' checks for a value and unwraps it into 'mouse' in one step.)
         if (_mouse is Point mouse && mouse.X >= plotLeft && mouse.X <= plotRight && mouse.Y >= plotTop && mouse.Y <= plotBottom)
         {
             dc.DrawLine(CrosshairPen, new Point(mouse.X, plotTop), new Point(mouse.X, plotBottom));
@@ -300,9 +306,9 @@ public class PriceChartControl : FrameworkElement
             DrawTag(dc, priceAtMouse.ToString(PriceFormat, CultureInfo.InvariantCulture), CrosshairTagBrush,
                     WhiteBrush, pixelsPerDip, plotRight + 4, mouse.Y);
 
-            // The time at the pointer's position, as a tag on the time axis.
+            // The time at the pointer's position, as a filled tag on the time axis (filled so it
+            // covers any axis label underneath).
             DateTime timeAtMouse = from + TimeSpan.FromSeconds((mouse.X - plotLeft) / plotWidth * windowSeconds);
-            // Drawn as a filled tag so it covers any axis label underneath it.
             var timeTag = MakeText(timeAtMouse.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture),
                                    AxisFace, 11, WhiteBrush, pixelsPerDip);
             var timeRect = new Rect(mouse.X - timeTag.Width / 2 - 6, plotBottom + 2, timeTag.Width + 12, 20);
@@ -327,8 +333,9 @@ public class PriceChartControl : FrameworkElement
         PricePoint last = points[points.Count - 1];
         double xNow = X(now);
 
-        // StreamGeometry is WPF's lightweight shape: a list of segments with no per-segment objects.
-        // One for the line, one for the filled area under it.
+        // StreamGeometry is WPF's lightweight shape type: a list of segments with no per-segment
+        // objects. One holds the line, the other the filled area under it (the line's points plus
+        // the two bottom corners).
         var line = new StreamGeometry();
         var area = new StreamGeometry();
         using (StreamGeometryContext lineCtx = line.Open())
@@ -357,7 +364,7 @@ public class PriceChartControl : FrameworkElement
         area.Freeze();
 
         dc.DrawGeometry(isUp ? UpAreaBrush : DownAreaBrush, null, area);
-        dc.DrawGeometry(null, isUp ? UpGlowPen : DownGlowPen, line);   // wide, faint line underneath = glow
+        dc.DrawGeometry(null, isUp ? UpGlowPen : DownGlowPen, line);   // a wide, faint copy underneath makes the glow
         dc.DrawGeometry(null, isUp ? UpLinePen : DownLinePen, line);
     }
 
@@ -385,6 +392,8 @@ public class PriceChartControl : FrameworkElement
 
     // ---- Crosshair readout text ----
 
+    // The readout for the time under the pointer: open/high/low/close in candle mode, or the
+    // nearest recorded price in line mode. Empty if there is nothing there.
     private string BuildReadout(PriceHistory? history, List<Candle>? candles, TimeSpan interval, DateTime timeAtMouse)
     {
         if (history == null || history.Count == 0) return "";
@@ -444,7 +453,8 @@ public class PriceChartControl : FrameworkElement
         dc.DrawText(formatted, new Point(rect.Left + 8, rect.Top + 5));
     }
 
-    // 'anchorX' means: the left edge for Left, the right edge for Right, the middle for Center.
+    // Draws text at a horizontal anchor. 'anchorX' is the left edge for Left, the right edge for
+    // Right, and the middle for Center.
     private static void DrawText(DrawingContext dc, string text, Typeface face, double size, Brush brush,
                                  double pixelsPerDip, double anchorX, double top, TextAlignment align)
     {

@@ -5,36 +5,30 @@ using System.Windows.Media;
 
 namespace TradingApp;
 
-// The price ladder, drawn by hand.
+// The order-book ladder, drawn by hand in OnRender.
 //
-// "Why not just use a DataGrid for this?"
+// Why not a DataGrid?
+//   * A DataGrid creates real WPF elements (rows, cells, text blocks, borders) for every row, and
+//     each goes through layout, styling and binding. A 50-row ladder updated 60 times a second
+//     would mean tens of thousands of element updates per second.
+//   * Here ONE element records ONE list of drawing commands ("draw this rectangle, this text")
+//     and WPF paints it. No per-row elements, bindings or layout passes.
+//   * A ladder isn't really a table: the price axis scrolls with the market, bars vary in width,
+//     and clicks need pixel-exact mapping to prices.
 //
-//   * A DataGrid builds real WPF elements (a row, cells, text blocks, borders) for every row,
-//     and each of those goes through layout, styling and binding. A 50-row ladder redrawn 60
-//     times a second means tens of thousands of element updates per second.
-//   * Here, ONE element owns ONE drawing. OnRender emits a list of "draw this rectangle, draw
-//     this text" commands, and WPF keeps that list and paints it. No per-row elements, no
-//     per-cell bindings, no layout pass per row. (It's the same idea as a <canvas> in JS,
-//     except WPF retains the drawing commands instead of leaving you pixels.)
-//   * A ladder isn't a table: the price axis scrolls with the market, size bars have varying
-//     widths, and you want pixel-exact control of what a click means. A grid fights you on all
-//     of that.
-//
-// FrameworkElement is the lightest WPF base class that can take part in layout and receive
-// mouse input. It has no look of its own. If we don't draw anything, it's invisible.
+// FrameworkElement is the lightest WPF base class that takes part in layout and receives mouse
+// input. It has no appearance of its own; everything visible comes from OnRender.
 public class LadderControl : FrameworkElement
 {
     // ---- Look and layout constants ----
     private const double RowHeight = 20;
     private const double TextSize = 12;
-    // Column split lives in LadderMath so the click math and the drawing always agree.
-    private const double BidColumnFraction = LadderMath.BidColumnFraction;       // left: bid sizes (click = Buy)
-    private const double PriceColumnFraction = LadderMath.PriceColumnFraction;   // middle: prices (click = nothing)
-    // the remaining right 30%: ask sizes (click = Sell)
+    // Column split comes from LadderMath so the drawing and the click math always agree.
+    private const double BidColumnFraction = LadderMath.BidColumnFraction;
+    private const double PriceColumnFraction = LadderMath.PriceColumnFraction;
 
-    // Brushes and pens are created once and Frozen. A frozen WPF resource is immutable, which
-    // lets WPF skip change tracking and share it across threads. Always do this for brushes
-    // you reuse every frame.
+    // Brushes and pens are created once and frozen. Freeze() makes a WPF resource immutable, so
+    // WPF can skip change tracking on it. Worth doing for anything reused every frame.
     private static readonly Typeface Face = new("Consolas");
     private static readonly Brush BackgroundBrush = Frozen(Color.FromRgb(0x14, 0x17, 0x1c));
     private static readonly Brush PriceColumnBrush = Frozen(Color.FromRgb(0x1d, 0x21, 0x28));
@@ -60,30 +54,27 @@ public class LadderControl : FrameworkElement
 
     // ---- State ----
 
-    // The book we've been TOLD to show. Set by MainWindow's frame timer.
+    // The book to show next. Set through the Book property by MainWindow's frame timer.
     private OrderBookSnapshot? _book;
 
-    // What we actually drew on the most recent frame. The click handler uses these, NOT _book,
-    // so a click always means what the user SAW, even if a newer book arrived a millisecond
-    // after the last render.
+    // What was actually drawn on the most recent render. The click handler uses these, NOT
+    // _book, so a click always means what the user SAW, even if a newer book has arrived since.
     private OrderBookSnapshot? _renderedBook;
     private long _renderedTopTick;
     private int _renderedRows;
     private int _renderedRowTicks = 1;
 
-    // How much price one row covers right now, as of the last drawn frame. Equals the tick size
-    // normally; larger when the ladder is grouping several ticks into each row (wide spreads).
+    // How much price one row covered on the last render. Equals the tick size normally; larger
+    // when the ladder groups several ticks into each row (wide spreads).
     public double RowPriceStep { get; private set; }
 
     public LadderControl()
     {
-        // Don't draw outside our own bounds (long numbers could otherwise spill over).
-        ClipToBounds = true;
+        ClipToBounds = true;   // don't let long numbers draw outside the control
     }
 
-    // Assigning a new book asks WPF to repaint. WPF calls OnRender later, at a convenient
-    // time on the UI thread. InvalidateVisual() does NOT draw right now. It just marks the
-    // element dirty, so calling it many times in a row costs almost nothing extra.
+    // Assigning a new book requests a repaint. InvalidateVisual() does not draw immediately; it
+    // marks the element as needing a render, and WPF calls OnRender later on the UI thread.
     public OrderBookSnapshot? Book
     {
         get => _book;
@@ -95,24 +86,23 @@ public class LadderControl : FrameworkElement
         }
     }
 
-    // The event. "event EventHandler<T>?" is a list of subscribers; the '?' means it's
-    // null when nobody has subscribed. Subscribers use `ladder.PriceClicked += handler;`
-    // (like addEventListener).
+    // Raised when the user clicks a bid or ask cell. Subscribe with 'Ladder.PriceClicked += handler'.
+    // The '?' is because the event is null until something subscribes.
     public event EventHandler<LadderClickEventArgs>? PriceClicked;
 
     // ---- Drawing ----
 
-    // WPF calls this whenever the element needs painting: first display, after
-    // InvalidateVisual(), and (via the override below) on resize. 'dc' is the recorder: every
-    // dc.DrawXxx call adds one command to the retained drawing.
+    // WPF calls this whenever the element needs painting: on first display, after
+    // InvalidateVisual(), and on resize (see OnRenderSizeChanged). Each dc.DrawXxx call adds one
+    // command to a drawing that WPF keeps and paints.
     protected override void OnRender(DrawingContext dc)
     {
         double width = ActualWidth;
         double height = ActualHeight;
 
-        // Fill the whole control with a background. Besides looking right, this matters for
-        // click-to-trade: WPF only delivers mouse clicks to pixels that were actually painted. Without
-        // this rectangle, clicks on "empty" areas would fall straight through.
+        // Fill the whole control with a background. This also matters for click-to-trade: WPF
+        // only delivers mouse clicks to pixels that were actually painted, so without it clicks
+        // on "empty" areas would fall straight through.
         dc.DrawRectangle(BackgroundBrush, null, new Rect(0, 0, width, height));
 
         var book = _book;
@@ -129,7 +119,7 @@ public class LadderControl : FrameworkElement
         double askLeft = bidWidth + priceWidth;
         double pixelsPerDip = VisualTreeHelper.GetDpi(this).PixelsPerDip;   // required by FormattedText
 
-        // Work in whole ticks (integers) so row -> price math never suffers float drift.
+        // Work in whole ticks (integers) so row-to-price math never suffers floating-point drift.
         double tick = book.TickSize;
         long bestBidTick = (long)Math.Round(book.BestBid / tick);
         long bestAskTick = (long)Math.Round(book.BestAsk / tick);
@@ -139,8 +129,8 @@ public class LadderControl : FrameworkElement
         int rowTicks = LadderMath.RowTicksFor(Math.Max(0, bestAskTick - bestBidTick), rows);
         RowPriceStep = rowTicks * tick;
 
-        // Row 0 is the TOP of the screen and shows the HIGHEST price. Centre the market
-        // vertically. As the mid moves, topTick moves and the whole ladder scrolls.
+        // Row 0 is the TOP of the screen and shows the HIGHEST price. The market is centered
+        // vertically, so as the mid moves, topTick moves and the whole ladder scrolls.
         long topTick = LadderMath.TopTick(bestBidTick, bestAskTick, rows, rowTicks);
 
         // Remember exactly what this frame showed, for hit-testing in OnMouseLeftButtonDown.
@@ -149,9 +139,9 @@ public class LadderControl : FrameworkElement
         _renderedRows = rows;
         _renderedRowTicks = rowTicks;
 
-        // Total size per row bucket. When rowTicks > 1, several book levels land in one row and
-        // their sizes are added. This allocates two tiny dictionaries per frame; it's fine at
-        // this scale. (Optimization for later: reuse them.)
+        // Total size per row. When rowTicks > 1, several book levels land in one row and their
+        // sizes are added. (Two small dictionaries per render is cheap at this scale; they could
+        // be reused if it ever mattered.)
         var bidSizes = new Dictionary<long, double>();
         var askSizes = new Dictionary<long, double>();
         foreach (var level in book.Bids)
@@ -181,8 +171,7 @@ public class LadderControl : FrameworkElement
         long bestBidRow = LadderMath.BucketOf(bestBidTick, rowTicks);
         long bestAskRow = LadderMath.BucketOf(bestAskTick, rowTicks);
 
-        // Show as many decimals as the tick size needs (see OrderBookSnapshot.PriceFormat).
-        string priceFormat = book.PriceFormat;
+        string priceFormat = book.PriceFormat;   // as many decimals as the tick size needs
 
         // The price column gets its own slightly lighter background.
         dc.DrawRectangle(PriceColumnBrush, null, new Rect(bidWidth, 0, priceWidth, rows * RowHeight));
@@ -193,7 +182,7 @@ public class LadderControl : FrameworkElement
             double y = row * RowHeight;
             double price = rowTick * tick;
 
-            // Bid side: bar grows LEFTWARD from the price column; size text sits next to the price.
+            // Bid side: the bar grows LEFTWARD from the price column; size text sits next to the price.
             if (bidSizes.TryGetValue(rowTick, out double bidSize))
             {
                 double barWidth = bidWidth * bidSize / maxSize;
@@ -209,26 +198,25 @@ public class LadderControl : FrameworkElement
                 DrawText(dc, FormatSize(askSize), TextBrush, pixelsPerDip, askLeft, askWidth, y, TextAlignment.Left);
             }
 
-            // Price label; the best bid and best ask are highlighted.
+            // Price label. The rows holding the best bid and best ask ("inside" prices) are highlighted.
             bool isInside = rowTick == bestBidRow || rowTick == bestAskRow;
             DrawText(dc, price.ToString(priceFormat, CultureInfo.InvariantCulture),
                      isInside ? HighlightBrush : TextBrush, pixelsPerDip, bidWidth, priceWidth, y, TextAlignment.Center);
 
-            // Thin line under the row.
             dc.DrawLine(GridPen, new Point(0, y + RowHeight), new Point(width, y + RowHeight));
         }
     }
 
-    // Sizes range from 50 DOGE-coins to 0.00005 BTC, so pick decimals by magnitude to keep the
-    // text short enough to fit its column.
+    // Sizes range from whole coins (DOGE) to tiny fractions (0.00005 BTC), so pick decimals by
+    // magnitude to keep the text short enough to fit its column.
     private static string FormatSize(double size) =>
         size >= 100 ? size.ToString("F0", CultureInfo.InvariantCulture)
         : size >= 1 ? size.ToString("F2", CultureInfo.InvariantCulture)
         : size.ToString("F4", CultureInfo.InvariantCulture);
 
-    // Drawing text takes a few steps in WPF: build a FormattedText (text + font + brush), measure
-    // it, then draw it at a point. The switch expression below is a compact if/else chain that
-    // produces a value (like a TS ternary chain).
+    // Draws text aligned within a column and vertically centered in a row. WPF text drawing takes
+    // three steps: build a FormattedText (text + font + brush), use its measured size to position
+    // it, then draw it. The 'switch' expression picks a value based on 'align'.
     private static void DrawText(DrawingContext dc, string text, Brush brush, double pixelsPerDip,
                                  double columnLeft, double columnWidth, double rowTop, TextAlignment align)
     {
@@ -256,37 +244,31 @@ public class LadderControl : FrameworkElement
 
     // ---- Click to trade ----
 
-    // 'protected override' = we're replacing a method the base class (UIElement) already has,
-    // and WPF calls it for us on every left-button press over this element.
+    // WPF calls this override on every left-button press over the control. It turns the mouse
+    // position into a (price, side) using what was last DRAWN, then raises PriceClicked. The
+    // arithmetic itself lives in LadderMath, which is unit tested.
     protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e)
     {
         base.OnMouseLeftButtonDown(e);
 
-        // Use what we last DREW, not whatever _book is now.
         var book = _renderedBook;
         if (book == null) return;
 
-        // Mouse position relative to this control's top-left corner.
-        Point point = e.GetPosition(this);
-
-        // The arithmetic lives in LadderMath (which has unit tests). This method only does
-        // the UI part: read the mouse position, then announce the result.
+        Point point = e.GetPosition(this);   // relative to this control's top-left corner
 
         // Which row? Null means the click landed outside the drawn rows.
         int? row = LadderMath.RowAtY(point.Y, RowHeight, _renderedRows);
         if (row == null) return;
 
-        // Which price? Row 0 is the top tick, and each row down is one tick lower.
+        // Which price? Row 0 is the top row; each row down is _renderedRowTicks ticks lower.
         long clickedTick = LadderMath.TickAtRow(_renderedTopTick, row.Value, _renderedRowTicks);
         double price = LadderMath.PriceAtTick(clickedTick, book.TickSize);
 
-        // Which side? Decided by the COLUMN: left = bids = Buy, right = asks = Sell.
-        // The middle (price) column does nothing.
+        // Which side? Left (bids) = Buy, right (asks) = Sell, middle (prices) = ignore.
         Side? side = LadderMath.SideAtX(point.X, ActualWidth);
         if (side == null) return;
 
-        // Announce it. '?.Invoke' calls every subscriber, or does nothing if there are none.
-        // The ladder doesn't know or care who is listening or what they'll do.
+        // '?.Invoke' calls every subscriber, or does nothing if there are none.
         PriceClicked?.Invoke(this, new LadderClickEventArgs(book.Symbol, price, side.Value));
         e.Handled = true;   // we dealt with this click; stop it bubbling up to parent elements
     }

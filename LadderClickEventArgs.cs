@@ -2,26 +2,16 @@ namespace TradingApp;
 
 public enum Side { Buy, Sell }
 
-// What the ladder says when you click it.
+// The payload of LadderControl.PriceClicked: which market, price and side the user clicked.
 //
-// "Who should listen, and what should it carry?"
+// It deliberately carries no quantity or order type. The ladder only reports "the user pointed at
+// this price and side"; deciding what to do with that belongs to whoever handles the event. Today
+// that is MainWindow, which writes a line to the order log. A real app would forward it
+// to an order-entry service, keeping the ladder reusable and putting checks such as risk limits
+// and confirmation in one place.
 //
-// CARRY: the minimum another part of the app needs to act without looking back at the ladder:
-//   - Symbol: which instrument's ladder this was
-//   - Price:  the price level that was clicked
-//   - Side:   Buy or Sell, decided by which column was clicked
-// It does NOT carry a quantity, an order type, or anything about the order. Those are decisions
-// for whoever handles the click. The ladder only reports "the user pointed at this price and
-// side". It doesn't know what an order is.
-//
-// LISTEN: not the ladder itself, and ideally not MainWindow either. Right now MainWindow
-// listens and writes a line to the blotter, which is fine for a demo. In the real app the
-// listener should be an order-entry service (something like IOrderGateway.Submit(...)) that
-// MainWindow forwards to. That keeps the ladder reusable (it knows nothing about orders) and
-// puts the "should we really send this?" logic (risk checks, confirmation) in one place.
-//
-// EventArgs is the .NET base class for event payloads, and the conventional handler shape is
-// (object? sender, TArgs e), like a DOM event listener receiving an Event object.
+// EventArgs is the .NET base class for event payloads. Handlers have the conventional
+// signature (object? sender, LadderClickEventArgs e).
 public sealed class LadderClickEventArgs : EventArgs
 {
     public LadderClickEventArgs(string symbol, double price, Side side)

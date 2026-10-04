@@ -1,12 +1,10 @@
 namespace TradingApp;
 
-// The data model the UI and the feed agree on.
+// A tradable market, as reported by the feed.
 //
-// A 'record' is a class whose main job is to hold data. Writing the one-line form below
-// gives you, for free: a constructor, read-only properties (Symbol, TickSize), value-based
-// Equals, and a readable ToString. Think of it as a frozen TS object type you can construct
-// with `new Instrument("AAPL", 0.01)`.
+// A 'record' is a class meant for holding data. This one-line form generates a constructor,
+// read-only properties (Symbol, TickSize), value-based equality and a readable ToString().
 //
-// TickSize is the smallest price step for the instrument. The ladder needs it to know how
-// far apart its rows are.
+// TickSize is the smallest price step the market allows (e.g. 0.01). The order book and ladder
+// use it to convert between prices and whole-number "ticks".
 public sealed record Instrument(string Symbol, double TickSize);

@@ -6,25 +6,25 @@ using System.Text.Json;
 
 namespace TradingApp;
 
-// A REAL IMarketDataSource: live order books from Kraken's public WebSocket API (v2).
+// The live IMarketDataSource: real order books from Kraken's public WebSocket API (v2).
 // Market data is free and needs no account or API key. Docs: https://docs.kraken.com/api/docs/websocket-v2/book
 //
-// It follows the same pattern as FakeMarketDataSource, so nothing in the UI had to change:
+// Same publishing pattern as FakeMarketDataSource:
 //
 //   WebSocket receive loop (background thread)
-//        |  applies each message to a PRIVATE working book
+//        |  applies each message to a PRIVATE working book (LocalOrderBook)
 //        |  publishes an immutable OrderBookSnapshot
 //        v
 //   _books (ConcurrentDictionary)  <--  the UI polls this ~60 times a second
 //
-// What's different from the fake: the data arrives as a snapshot followed by a stream of
-// CHANGES ("level 84547.7 now has size 0.72"; size 0 means "remove this level"). So we must keep
-// our own copy of the book and apply each change to it before publishing.
+// Unlike the fake, Kraken sends one full snapshot followed by a stream of CHANGES ("level 84547.7
+// now has size 0.72"; size 0 means "remove this level"), so we keep our own copy of each book and
+// apply every change to it before publishing.
 //
-// DELIBERATELY NOT DONE (needed before trusting this for real money):
-//   * Kraken sends a CRC32 checksum with every update so you can detect a corrupted local book.
-//     We don't verify it. The cheap fix is: if it ever fails, resubscribe to get a fresh snapshot.
-//   * Rate-limit handling, authentication, and order entry. This is read-only market data.
+// NOT DONE (would be needed before trusting this with real money):
+//   * Kraken sends a CRC32 checksum with each update to detect a corrupted local book. We don't
+//     verify it. The simple fix: on a mismatch, resubscribe to get a fresh snapshot.
+//   * Rate-limit handling, authentication and order entry. This is read-only market data.
 public sealed class KrakenMarketDataSource : IMarketDataSource
 {
     private const string Url = "wss://ws.kraken.com/v2";
@@ -39,7 +39,7 @@ public sealed class KrakenMarketDataSource : IMarketDataSource
     // RECEIVE-LOOP-ONLY: the working books we apply changes to. The UI never sees these.
     private readonly Dictionary<string, LocalOrderBook> _local = new();
 
-    private readonly CancellationTokenSource _cts = new();   // "please stop" signal for everything below
+    private readonly CancellationTokenSource _cts = new();   // cancelled by Dispose(); stops all network work
     private IReadOnlyList<Instrument> _instruments = Array.Empty<Instrument>();
     private long _updateCount;
 
@@ -52,12 +52,12 @@ public sealed class KrakenMarketDataSource : IMarketDataSource
 
     // ---- Startup: connect, learn tick sizes, subscribe, then hand off to the receive loop ----
 
-    // 'async Task' means: this method can pause at each 'await' without blocking its thread,
-    // then resume. Same idea as async/await in JS.
+    // 'async Task' means the method can pause at each 'await' without blocking its thread, and
+    // resume when the awaited work finishes.
     //
-    // .ConfigureAwait(false) on every await in this class: by default, after an await, WPF
-    // resumes the method back on the UI thread. This class has nothing to do with the UI, so
-    // it opts out and lets the work continue on whichever thread is free.
+    // Every await in this class uses .ConfigureAwait(false). Without it, an await started on the
+    // UI thread resumes on the UI thread. This class never touches the UI, so it opts out and
+    // continues on a thread-pool thread instead, keeping the UI thread free.
     public async Task StartAsync()
     {
         var token = _cts.Token;
@@ -65,8 +65,9 @@ public sealed class KrakenMarketDataSource : IMarketDataSource
 
         var socket = await ConnectAsync(token).ConfigureAwait(false);
 
-        // 1) Ask for the instrument list, to learn each symbol's tick size. Give up after 15s
-        //    rather than hang the UI's startup forever.
+        // 1) Ask for the instrument list to learn each symbol's tick size. Give up after 15s
+        //    rather than leave the app stuck at startup. The 'when' filter turns only OUR timeout
+        //    into a TimeoutException; a cancellation from Dispose() passes through unchanged.
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
         timeout.CancelAfter(TimeSpan.FromSeconds(15));
         try
@@ -91,8 +92,8 @@ public sealed class KrakenMarketDataSource : IMarketDataSource
         RaiseStatus("Connected to Kraken");
 
         // 3) Hand the socket to a loop that runs for the life of the app. Task.Run starts it on a
-        //    thread-pool thread. We don't await it, because it never finishes until Dispose().
-        //    It catches its own exceptions, so nothing is lost by not observing the Task.
+        //    thread-pool thread. We don't await it (it only ends after Dispose()); '_ =' discards
+        //    the Task on purpose. It catches its own exceptions, so none go unobserved.
         _ = Task.Run(() => RunAsync(socket, token));
     }
 
@@ -123,7 +124,7 @@ public sealed class KrakenMarketDataSource : IMarketDataSource
             if (!root.TryGetProperty("type", out var type) || type.GetString() != "snapshot") continue;
 
             var data = root.GetProperty("data");
-            if (data.ValueKind == JsonValueKind.Array) data = data[0];   // tolerate either shape
+            if (data.ValueKind == JsonValueKind.Array) data = data[0];   // accept an object or a one-item array
 
             var found = new Dictionary<string, Instrument>();
             foreach (var pair in data.GetProperty("pairs").EnumerateArray())
@@ -145,8 +146,9 @@ public sealed class KrakenMarketDataSource : IMarketDataSource
 
     // ---- The receive loop ----
 
-    // Runs on a thread-pool thread for the life of the feed. If the connection drops, it
-    // reconnects and resubscribes. Kraken then sends fresh snapshots, which replace our local books.
+    // Runs on a thread-pool thread for the life of the feed. If the connection drops, it retries
+    // every 3 seconds until it reconnects and resubscribes. Kraken then sends fresh snapshots,
+    // which replace our local books.
     private async Task RunAsync(ClientWebSocket socket, CancellationToken token)
     {
         while (!token.IsCancellationRequested)
@@ -161,7 +163,6 @@ public sealed class KrakenMarketDataSource : IMarketDataSource
 
             socket.Dispose();
 
-            // Keep trying until it works or we're told to stop.
             while (!token.IsCancellationRequested)
             {
                 try
@@ -216,13 +217,12 @@ public sealed class KrakenMarketDataSource : IMarketDataSource
             var bids = ParseLevels(item.GetProperty("bids"));
             var asks = ParseLevels(item.GetProperty("asks"));
 
-            // A snapshot REPLACES the book; an update CHANGES it. (The bookkeeping lives in
-            // LocalOrderBook, which has its own unit tests.)
+            // A snapshot REPLACES the book; an update CHANGES part of it.
             if (isSnapshot) book.ApplySnapshot(bids, asks);
             else book.ApplyUpdate(bids, asks);
 
-            // Turn the working book into a finished, immutable snapshot and swap it into the
-            // shared dictionary. Null means the book is one-sided right now: publish nothing.
+            // Publish: swap a finished, immutable snapshot into the shared dictionary. Null means
+            // one side of the book is empty right now, so there is nothing useful to publish.
             var snapshot = book.ToSnapshot();
             if (snapshot != null)
             {
@@ -249,8 +249,9 @@ public sealed class KrakenMarketDataSource : IMarketDataSource
     private static Task SendAsync(ClientWebSocket socket, string text, CancellationToken token) =>
         socket.SendAsync(new ArraySegment<byte>(Encoding.UTF8.GetBytes(text)), WebSocketMessageType.Text, true, token);
 
-    // One logical message can arrive in several frames (the instrument list is large), so keep
-    // reading until EndOfMessage. Returns null if the server closed the connection.
+    // One message can arrive split across several WebSocket frames (the instrument list is large),
+    // so keep reading until EndOfMessage. Returns null if the server closed the connection.
+    // The caller must dispose the returned JsonDocument.
     private static async Task<JsonDocument?> ReceiveAsync(ClientWebSocket socket, CancellationToken token)
     {
         var buffer = new byte[16 * 1024];

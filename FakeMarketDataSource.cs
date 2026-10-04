@@ -2,11 +2,11 @@ using System.Collections.Concurrent;
 
 namespace TradingApp;
 
-// A fake implementation of IMarketDataSource, so the UI can be built and demoed without a feed.
+// A simulated IMarketDataSource (random-walk prices), for offline use, demos and load testing.
 //
-// It is a background producer thread that publishes whole order books: it overwrites the
-// "latest" state in a ConcurrentDictionary, and the UI polls it. This class is the ONLY place
-// that knows a thread exists. MainWindow just calls GetLatestBook().
+// A background thread repeatedly builds whole order books and overwrites the latest one per
+// symbol in a ConcurrentDictionary. The UI polls that through GetLatestBook() and never deals
+// with the thread directly.
 public sealed class FakeMarketDataSource : IMarketDataSource
 {
     private const int Depth = 10;               // levels per side
@@ -21,14 +21,14 @@ public sealed class FakeMarketDataSource : IMarketDataSource
     // SHARED between threads: the latest finished snapshot per symbol.
     private readonly ConcurrentDictionary<string, OrderBookSnapshot> _books = new();
 
-    // PRODUCER-THREAD-ONLY state (after Start): the working prices, in whole ticks.
-    // Using integers for price avoids floating-point drift (123.45 stays exactly 12345 ticks).
+    // PRODUCER-THREAD-ONLY state (after StartAsync), indexed like _instruments. Prices are in
+    // whole ticks: integers avoid floating-point drift (123.45 stays exactly 12345 ticks).
     private readonly long[] _midTicks;
     private readonly long[] _startTicks;
     private readonly long[] _sequence;
 
     private long _updateCount;
-    private CancellationTokenSource? _cts;   // a "please stop" flag the thread checks
+    private CancellationTokenSource? _cts;   // signals the thread to stop; set by Dispose()
     private Thread? _thread;
 
     public FakeMarketDataSource()
@@ -37,8 +37,8 @@ public sealed class FakeMarketDataSource : IMarketDataSource
         _startTicks = new long[_instruments.Length];
         _sequence = new long[_instruments.Length];
 
-        // Seed a starting price per instrument and publish an initial book, so that
-        // GetLatestBook() works immediately, before Start() is ever called.
+        // Pick a random starting price per instrument and publish an initial book, so that
+        // GetLatestBook() returns data immediately, even before StartAsync() is called.
         for (int i = 0; i < _instruments.Length; i++)
         {
             double startPrice = 100 + Random.Shared.Next(0, 100);
@@ -54,10 +54,11 @@ public sealed class FakeMarketDataSource : IMarketDataSource
 
     public OrderBookSnapshot? GetLatestBook(string symbol) => _books.TryGetValue(symbol, out var book) ? book : null;
 
-    // Never raised by the fake except once at startup. Declared because the interface requires it.
+    // Raised only once, at startup.
     public event EventHandler<string>? StatusChanged;
 
-    // Nothing to wait for with a fake, so this returns an already-finished Task.
+    // Starts the producer thread. There is nothing to connect to, so this returns an
+    // already-completed Task.
     public Task StartAsync()
     {
         if (_thread != null) return Task.CompletedTask;   // already running
@@ -80,12 +81,11 @@ public sealed class FakeMarketDataSource : IMarketDataSource
         {
             for (int n = 0; n < UpdatesPerBatch; n++)
             {
-                // Random.Shared is the thread-safe Random (a plain 'new Random()' shared
-                // across threads is not safe).
+                // Random.Shared is thread-safe; a single 'new Random()' shared across threads is not.
                 int i = Random.Shared.Next(_instruments.Length);
                 int step = Random.Shared.Next(-1, 2);   // -1, 0, or +1 tick
 
-                // Gentle pull back toward the starting price.
+                // If the price has drifted too far from where it started, force a step back.
                 long drift = _midTicks[i] - _startTicks[i];
                 if (drift > MaxDriftTicks) step = -1;
                 else if (drift < -MaxDriftTicks) step = 1;
@@ -97,7 +97,7 @@ public sealed class FakeMarketDataSource : IMarketDataSource
                 _books[_instruments[i].Symbol] = BuildBook(i);
                 Interlocked.Increment(ref _updateCount);
             }
-            Thread.Sleep(1);   // yield the CPU; fine to sleep, this is not the UI thread
+            Thread.Sleep(1);   // give the CPU a break; sleeping is fine off the UI thread
         }
     }
 

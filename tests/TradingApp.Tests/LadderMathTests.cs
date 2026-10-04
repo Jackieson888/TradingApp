@@ -3,7 +3,7 @@ using TradingApp;
 namespace TradingApp.Tests;
 
 // Tests for the arithmetic behind "which price and side did the user click?". An off-by-one here
-// would send an order at the wrong price, so each rule is pinned down, including the boundaries.
+// would log an order at the wrong price, so each rule is pinned down, including the boundaries.
 public class LadderMathTests
 {
     // ---- Which tick is on the top row? ----

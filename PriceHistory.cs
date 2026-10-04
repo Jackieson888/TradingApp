@@ -12,13 +12,13 @@ public readonly record struct Candle(DateTime Start, double Open, double High, d
 // A rolling window of recent prices for ONE market, recorded live while the app runs.
 //
 // Design notes:
-//  * It only ever keeps the last 'retention' worth of points, so memory is bounded no matter
-//    how long the app runs.
-//  * The CALLER supplies each timestamp (nothing here reads the clock). That keeps this class
-//    pure and testable: a test can feed it exact times and check exact results.
-//  * NOT thread-safe. It is meant to be owned by the UI thread: the frame timer adds samples
-//    and the chart reads them, both on the same thread, so no locking is needed. (Contrast with
-//    the order books, which cross threads and therefore use immutable snapshots.)
+//  * It only keeps the last 'retention' worth of points, so memory stays bounded however long
+//    the app runs.
+//  * The CALLER supplies each timestamp (nothing here reads the clock), so tests can feed it
+//    exact times and check exact results.
+//  * NOT thread-safe. It is owned by the UI thread: the frame timer adds samples and the chart
+//    reads them, both on that thread, so no locking is needed. (Order books, by contrast, cross
+//    threads and therefore use immutable snapshots.)
 public sealed class PriceHistory
 {
     private readonly List<PricePoint> _points = new();
@@ -36,11 +36,11 @@ public sealed class PriceHistory
     // Oldest first. Exposed read-only so the chart can loop over it without copying.
     public IReadOnlyList<PricePoint> Points => _points;
 
-    // The newest point, or null if nothing has been recorded. 'PricePoint?' is a nullable struct.
+    // The newest point, or null if nothing has been recorded. '[^1]' means "last element".
     public PricePoint? Latest => _points.Count > 0 ? _points[^1] : null;
 
-    // Records a price. Returns false (and records nothing) if the price is not a usable number
-    // or the timestamp is older than the newest point already stored.
+    // Records a price. Returns false (and records nothing) if the price is NaN or infinite, or
+    // the timestamp is older than the newest point already stored. Equal timestamps are allowed.
     public bool Add(DateTime time, double price)
     {
         if (double.IsNaN(price) || double.IsInfinity(price)) return false;
@@ -58,8 +58,8 @@ public sealed class PriceHistory
         int expired = 0;
         while (expired < _points.Count && _points[expired].Time < cutoff) expired++;
 
-        // Removing from the front of a List shifts the rest down. With ~3,000 small points at
-        // 10 samples a second that's trivial. (A ring buffer would avoid it if this ever mattered.)
+        // Removing from the front of a List shifts the rest down. At ~3,000 small points that is
+        // cheap; a ring buffer would avoid it if it ever mattered.
         if (expired > 0) _points.RemoveRange(0, expired);
     }
 
@@ -77,8 +77,8 @@ public sealed class PriceHistory
         return low;
     }
 
-    // Lowest and highest price among points at or after 'from'. False if there are none.
-    // 'out' parameters are how a C# method hands back more than one result.
+    // Lowest and highest price among points at or after 'from'. Returns false if there are none.
+    // The results come back through the 'out' parameters.
     public bool TryGetRange(DateTime from, out double min, out double max)
     {
         min = double.MaxValue;

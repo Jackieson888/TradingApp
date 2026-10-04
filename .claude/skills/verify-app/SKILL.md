@@ -51,7 +51,7 @@ feed needs internet access.
    if (-not $app.HasExited) { Stop-Process -Id $app.Id }     # only the PID you started
    Remove-Item Env:TRADINGAPP_FEED -ErrorAction SilentlyContinue
    ```
-   Pass means: it did not exit early, and the window title is `Trading Practice`. If it exited, report the
+   Pass means: it did not exit early, and the window title is `Trading Demo App`. If it exited, report the
    exit code.
 
 ## Report
