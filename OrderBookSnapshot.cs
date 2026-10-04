@@ -1,6 +1,6 @@
 namespace TradingApp;
 
-// STEP 6: one price level in the book: "Size contracts are available at Price".
+// One price level in the book: "Size contracts are available at Price".
 //
 // 'readonly record struct' = a record that lives inline (a value type), not on the heap.
 // A book has dozens of levels and we rebuild it thousands of times a second, so skipping
@@ -9,7 +9,7 @@ namespace TradingApp;
 // Size is a double because real markets trade fractions (0.0005 BTC).
 public readonly record struct BookLevel(double Price, double Size);
 
-// STEP 6: the order book for one instrument at one moment in time.
+// The order book for one instrument at one moment in time.
 //
 // IMMUTABLE ON PURPOSE. Nothing in here can change after construction. That is what makes it
 // safe to hand between threads: the producer builds a new snapshot and swaps the reference

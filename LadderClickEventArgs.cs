@@ -2,7 +2,7 @@ namespace TradingApp;
 
 public enum Side { Buy, Sell }
 
-// STEP 8: what the ladder says when you click it.
+// What the ladder says when you click it.
 //
 // "Who should listen, and what should it carry?"
 //

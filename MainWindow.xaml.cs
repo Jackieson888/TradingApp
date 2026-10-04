@@ -116,11 +116,11 @@ public partial class MainWindow : Window
         ModeLine.Checked += (sender, e) => Chart.Mode = ChartMode.Line;
         ModeCandles.Checked += (sender, e) => Chart.Mode = ChartMode.Candles;
 
-        // Step 8: subscribe to the ladder's click event.
+        // Subscribe to the ladder's click event.
         Ladder.PriceClicked += OnLadderClicked;
 
         // The feed raises StatusChanged on a BACKGROUND thread, and StatusText is a UI object,
-        // so hop to the UI thread first. This is step 5's lesson applied. It's fine to use
+        // so hop to the UI thread first. UI objects may only be touched from the UI thread. It's fine to use
         // BeginInvoke here because status changes are rare (see IMarketDataSource).
         _source.StatusChanged += (sender, text) => Dispatcher.BeginInvoke(() => StatusText.Text = text);
 
@@ -273,7 +273,7 @@ public partial class MainWindow : Window
         }
     }
 
-    // STEP 8: the listener. This is a normal method, not a lambda, because it's big enough to
+    // The listener for ladder clicks. This is a normal method, not a lambda, because it's big enough to
     // deserve a name. It runs on the UI thread, because the click that raised the event did.
     // For now it just writes a log line. In a real app this is where you'd forward to an
     // order-entry service instead (see LadderClickEventArgs.cs).

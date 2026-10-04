@@ -3,7 +3,7 @@ using System.Runtime.CompilerServices;
 
 namespace TradingApp;
 
-// One row in the watchlist. Same INotifyPropertyChanged pattern as TickerViewModel.
+// One row in the watchlist. It implements INotifyPropertyChanged so the grid updates when Price changes.
 // Symbol never changes after construction, so it needs no change notification.
 // Price does change, so its setter raises PropertyChanged.
 public class Quote : INotifyPropertyChanged

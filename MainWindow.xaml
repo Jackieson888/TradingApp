@@ -270,7 +270,7 @@
                                HorizontalAlignment="Center" ToolTip="An ask is the price a seller wants. The number is how much they are offering."/>
                 </Grid>
 
-                <!-- Step 7: our own control from LadderControl.cs. The "local:" prefix is the
+                <!-- Our own control from LadderControl.cs. The "local:" prefix is the
                      xmlns:local namespace declared at the top, so local:LadderControl means the
                      class TradingApp.LadderControl. It draws itself; MainWindow feeds it books. -->
                 <local:LadderControl x:Name="Ladder"

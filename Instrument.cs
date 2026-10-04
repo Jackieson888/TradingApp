@@ -1,6 +1,6 @@
 namespace TradingApp;
 
-// STEP 6: the data model the UI and the feed agree on.
+// The data model the UI and the feed agree on.
 //
 // A 'record' is a class whose main job is to hold data. Writing the one-line form below
 // gives you, for free: a constructor, read-only properties (Symbol, TickSize), value-based

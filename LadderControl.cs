@@ -5,9 +5,9 @@ using System.Windows.Media;
 
 namespace TradingApp;
 
-// STEP 7: the price ladder, drawn by hand.
+// The price ladder, drawn by hand.
 //
-// "Why not just use another DataGrid for this?"
+// "Why not just use a DataGrid for this?"
 //
 //   * A DataGrid builds real WPF elements (a row, cells, text blocks, borders) for every row,
 //     and each of those goes through layout, styling and binding. A 50-row ladder redrawn 60
@@ -95,12 +95,12 @@ public class LadderControl : FrameworkElement
         }
     }
 
-    // STEP 8: the event. "event EventHandler<T>?" is a list of subscribers; the '?' means it's
+    // The event. "event EventHandler<T>?" is a list of subscribers; the '?' means it's
     // null when nobody has subscribed. Subscribers use `ladder.PriceClicked += handler;`
     // (like addEventListener).
     public event EventHandler<LadderClickEventArgs>? PriceClicked;
 
-    // ---- STEP 7: drawing ----
+    // ---- Drawing ----
 
     // WPF calls this whenever the element needs painting: first display, after
     // InvalidateVisual(), and (via the override below) on resize. 'dc' is the recorder: every
@@ -111,7 +111,7 @@ public class LadderControl : FrameworkElement
         double height = ActualHeight;
 
         // Fill the whole control with a background. Besides looking right, this matters for
-        // STEP 8: WPF only delivers mouse clicks to pixels that were actually painted. Without
+        // click-to-trade: WPF only delivers mouse clicks to pixels that were actually painted. Without
         // this rectangle, clicks on "empty" areas would fall straight through.
         dc.DrawRectangle(BackgroundBrush, null, new Rect(0, 0, width, height));
 
@@ -254,7 +254,7 @@ public class LadderControl : FrameworkElement
         InvalidateVisual();
     }
 
-    // ---- STEP 8: click to trade ----
+    // ---- Click to trade ----
 
     // 'protected override' = we're replacing a method the base class (UIElement) already has,
     // and WPF calls it for us on every left-button press over this element.

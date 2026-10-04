@@ -2,12 +2,11 @@ using System.Collections.Concurrent;
 
 namespace TradingApp;
 
-// STEP 6: a fake implementation of IMarketDataSource, so the UI can be built without a feed.
+// A fake implementation of IMarketDataSource, so the UI can be built and demoed without a feed.
 //
-// It is step 5's producer thread, moved out of MainWindow and upgraded to publish whole order
-// books. The design hasn't changed: a background thread overwrites the "latest" state in a
-// ConcurrentDictionary, and the UI polls it. This class is the ONLY place that knows a thread
-// exists. MainWindow just calls GetLatestBook().
+// It is a background producer thread that publishes whole order books: it overwrites the
+// "latest" state in a ConcurrentDictionary, and the UI polls it. This class is the ONLY place
+// that knows a thread exists. MainWindow just calls GetLatestBook().
 public sealed class FakeMarketDataSource : IMarketDataSource
 {
     private const int Depth = 10;               // levels per side
